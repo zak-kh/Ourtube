@@ -52,10 +52,11 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.deno
+            ~/.local/bin/yt-dlp
             /usr/local/bin/yt-dlp
-          key: ${{ runner.os }}-ytdlp-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-ytdlp-v2-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-ytdlp-
+            ${{ runner.os }}-ytdlp-v2-
 
       - name: Install dependencies (if cache miss)
         if: steps.cache-tools.outputs.cache-hit != 'true'
@@ -71,8 +72,26 @@ jobs:
 
       - name: Make yt-dlp available
         run: |
-          export PATH="$HOME/.deno/bin:$PATH"
+          # افزودن مسیرهای محتمل به PATH
+          export PATH="$HOME/.local/bin:$HOME/.deno/bin:/usr/local/bin:$PATH"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          echo "/usr/local/bin" >> $GITHUB_PATH
+          
+          # اگر yt-dlp پیدا نشد، آن را نصب کن
+          if ! command -v yt-dlp &> /dev/null; then
+            echo "yt-dlp not found, installing..."
+            pip3 install --upgrade yt-dlp
+          fi
+          
+          # اطمینان از وجود لینک سمبلیک در /usr/local/bin
+          YT_PATH=$(which yt-dlp 2>/dev/null || true)
+          if [ -n "$YT_PATH" ] && [ ! -f /usr/local/bin/yt-dlp ]; then
+            sudo ln -sf "$YT_PATH" /usr/local/bin/yt-dlp
+          fi
+          
+          yt-dlp --version
+          deno --version
 
       - name: Prepare staging area
         run: |
@@ -90,14 +109,12 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           set -e
-          # پارامترها
           IFS=' ' read -ra URL_ARRAY <<< "$URLS"
           SPLIT_MB=45
           QUALITY="$QUALITY"
           SUBS="$WITH_SUBS"
           PASSWORD="$ZIP_PASS"
 
-          # توابع کمکی
           sanitize() {
             echo "$1" | sed 's/[^A-Za-z0-9_\-.波斯فارسی]/_/g' | sed 's/__*/_/g'
           }
@@ -105,7 +122,6 @@ jobs:
             python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
           }
 
-          # انتخاب فرمت بر اساس کیفیت
           case "$QUALITY" in
             audio)      FORMAT="bestaudio/best" ;;
             best)       FORMAT="bestvideo+bestaudio/best" ;;
@@ -117,19 +133,15 @@ jobs:
             *)          FORMAT="bestvideo+bestaudio/best" ;;
           esac
 
-          # حلقه روی لینک‌ها
           idx=1
           for URL in "${URL_ARRAY[@]}"; do
             echo "============================================"
             echo "Downloading ($idx/${#URL_ARRAY[@]}): $URL"
             echo "============================================"
 
-            # پوشه موقت
             TMP_DIR="tmp_$idx"
             mkdir -p "$TMP_DIR"
-            FINAL_NAME=""
 
-            # دانلود با روش‌های مختلف (4 روش اصلی)
             DOWNLOAD_OK=false
             for METHOD in 1 2 3 4; do
               echo "Trying method $METHOD..."
@@ -177,7 +189,6 @@ jobs:
               continue
             fi
 
-            # پیدا کردن فایل ویدئو و بندانگشتی
             VIDEO_FILE=$(find "$TMP_DIR" -type f \( -name "*.mp4" -o -name "*.mkv" -o -name "*.webm" \) | head -1)
             THUMB_FILE=$(find "$TMP_DIR" -type f -name "*.jpg" | head -1)
             if [ -z "$VIDEO_FILE" ]; then
@@ -192,18 +203,15 @@ jobs:
             SAFE_NAME=$(sanitize "$NAME_NOEXT")
             FOLDER_NAME="$SAFE_NAME"
 
-            # ایجاد فولدر نهایی
             FINAL_DIR="videos/$FOLDER_NAME"
             mkdir -p "$FINAL_DIR"
 
-            # کپی بندانگشتی
             if [ -f "$THUMB_FILE" ]; then
               cp "$THUMB_FILE" "$FINAL_DIR/thumbnail.jpg"
             fi
 
-            # بررسی حجم و split در صورت لزوم
             FILE_SIZE=$(stat -c%s "$VIDEO_FILE")
-            MAX_SIZE=$((100 * 1024 * 1024))  # 100MB
+            MAX_SIZE=$((100 * 1024 * 1024))
             if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
               echo "File larger than 100MB, splitting into ${SPLIT_MB}MB parts..."
               if [ -n "$PASSWORD" ]; then
@@ -211,7 +219,6 @@ jobs:
               else
                 zip -0 -s ${SPLIT_MB}m "$FINAL_DIR/${FOLDER_NAME}.zip" "$VIDEO_FILE"
               fi
-              # لینک‌ها را برای README جمع‌آوری کن
               PART_LINKS=""
               for part in $(ls "$FINAL_DIR"/${FOLDER_NAME}.z* "$FINAL_DIR"/${FOLDER_NAME}.zip 2>/dev/null | sort -V); do
                 PART_NAME=$(basename "$part")
@@ -234,7 +241,6 @@ jobs:
               README_CONTENT+="$PART_LINKS"
               echo -e "$README_CONTENT" > "$FINAL_DIR/README.md"
             else
-              # فایل کوچک -> بدون split
               cp "$VIDEO_FILE" "$FINAL_DIR/${FOLDER_NAME}.mp4"
               ENC_FILE=$(urlencode "${FOLDER_NAME}.mp4")
               RAW_LINK="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/videos/${FOLDER_NAME}/${ENC_FILE}"
@@ -250,7 +256,6 @@ jobs:
               echo -e "$README_CONTENT" > "$FINAL_DIR/README.md"
             fi
 
-            # دانلود زیرنویس اگر خواسته شده باشد
             if [ "$SUBS" = "true" ]; then
               echo "Downloading subtitles..."
               SUB_DIR="$FINAL_DIR/subtitles"
@@ -259,7 +264,6 @@ jobs:
                 --output "$SUB_DIR/%(title)s.%(ext)s" "$URL" 2>/dev/null || true
               yt-dlp --write-auto-sub --sub-langs fa,en --convert-subs vtt --skip-download \
                 --output "$SUB_DIR/%(title)s.%(ext)s" "$URL" 2>/dev/null || true
-              # زیپ کردن زیرنویس‌ها
               if [ -n "$(find "$SUB_DIR" -type f)" ]; then
                 (cd "$SUB_DIR" && zip -j "../subtitles.zip" ./*) && rm -rf "$SUB_DIR"
               else
@@ -276,10 +280,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Force add videos folder (ignore .gitignore)
           git add -f videos/
           git diff --cached --quiet || git commit -m "Add downloaded videos [skip ci]"
-          # Push with retry
           for i in {1..5}; do
             if git push origin HEAD:${GITHUB_REF_NAME}; then
               echo "✅ Push successful"

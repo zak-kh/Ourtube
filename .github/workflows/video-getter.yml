@@ -26,7 +26,7 @@ on:
         default: false
         type: boolean
       password:
-        description: '🔒 رمز فایل ZIP (اختیاری)'
+        description: '🔒 رمز فایل (اختیاری)'
         required: false
         default: ''
         type: string
@@ -45,7 +45,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Cache yt-dlp & deno
+      - name: Cache tools (yt-dlp, deno)
         id: cache-tools
         uses: actions/cache@v4
         with:
@@ -54,9 +54,9 @@ jobs:
             ~/.deno
             ~/.local/bin/yt-dlp
             /usr/local/bin/yt-dlp
-          key: ${{ runner.os }}-ytdlp-v2-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-ytdlp-v3-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-ytdlp-v2-
+            ${{ runner.os }}-ytdlp-v3-
 
       - name: Install dependencies (if cache miss)
         if: steps.cache-tools.outputs.cache-hit != 'true'
@@ -70,33 +70,34 @@ jobs:
           echo "$DENO_INSTALL/bin" >> $GITHUB_PATH
           sudo ln -sf $(which yt-dlp) /usr/local/bin/yt-dlp
 
-      - name: Make yt-dlp available
+      - name: Make tools available
         run: |
-          # افزودن مسیرهای محتمل به PATH
           export PATH="$HOME/.local/bin:$HOME/.deno/bin:/usr/local/bin:$PATH"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
           echo "/usr/local/bin" >> $GITHUB_PATH
-          
-          # اگر yt-dlp پیدا نشد، آن را نصب کن
           if ! command -v yt-dlp &> /dev/null; then
-            echo "yt-dlp not found, installing..."
             pip3 install --upgrade yt-dlp
           fi
-          
-          # اطمینان از وجود لینک سمبلیک در /usr/local/bin
           YT_PATH=$(which yt-dlp 2>/dev/null || true)
           if [ -n "$YT_PATH" ] && [ ! -f /usr/local/bin/yt-dlp ]; then
             sudo ln -sf "$YT_PATH" /usr/local/bin/yt-dlp
           fi
-          
           yt-dlp --version
           deno --version
 
-      - name: Prepare staging area
+      - name: Setup YouTube cookies
+        run: |
+          if [ -n "${{ secrets.YOUTUBE_COOKIES }}" ]; then
+            echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
+            echo "✅ Cookies loaded (from secret)"
+          else
+            echo "⚠️ No cookies found. YouTube may block the download."
+          fi
+
+      - name: Prepare folders
         run: |
           mkdir -p videos
-          echo "[]" > /tmp/video_list.json
 
       - name: Download videos
         env:
@@ -114,6 +115,7 @@ jobs:
           QUALITY="$QUALITY"
           SUBS="$WITH_SUBS"
           PASSWORD="$ZIP_PASS"
+          COOKIE_FILE="cookies.txt"
 
           sanitize() {
             echo "$1" | sed 's/[^A-Za-z0-9_\-.波斯فارسی]/_/g' | sed 's/__*/_/g'
@@ -122,6 +124,7 @@ jobs:
             python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
           }
 
+          # Determine format
           case "$QUALITY" in
             audio)      FORMAT="bestaudio/best" ;;
             best)       FORMAT="bestvideo+bestaudio/best" ;;
@@ -133,6 +136,12 @@ jobs:
             *)          FORMAT="bestvideo+bestaudio/best" ;;
           esac
 
+          # Common yt-dlp options
+          COMMON_OPTS="--merge-output-format mp4 --write-thumbnail --convert-thumbnails jpg --no-playlist --retries 5 --fragment-retries 5 --no-check-certificates"
+          if [ -f "$COOKIE_FILE" ]; then
+            COMMON_OPTS="$COMMON_OPTS --cookies $COOKIE_FILE"
+          fi
+
           idx=1
           for URL in "${URL_ARRAY[@]}"; do
             echo "============================================"
@@ -143,38 +152,31 @@ jobs:
             mkdir -p "$TMP_DIR"
 
             DOWNLOAD_OK=false
+            # Try different methods
             for METHOD in 1 2 3 4; do
               echo "Trying method $METHOD..."
               case $METHOD in
                 1)
-                  yt-dlp --format "$FORMAT" --merge-output-format mp4 \
-                    --write-thumbnail --convert-thumbnails jpg \
+                  yt-dlp $COMMON_OPTS --format "$FORMAT" \
                     --output "$TMP_DIR/%(title)s.%(ext)s" \
-                    --no-playlist --retries 3 --no-check-certificates \
                     --js-runtimes deno --remote-components ejs:github \
                     "$URL" && DOWNLOAD_OK=true
                   ;;
                 2)
-                  yt-dlp --format "$FORMAT" --merge-output-format mp4 \
-                    --write-thumbnail --convert-thumbnails jpg \
+                  yt-dlp $COMMON_OPTS --format "$FORMAT" \
                     --output "$TMP_DIR/%(title)s.%(ext)s" \
-                    --no-playlist --retries 3 --no-check-certificates \
                     --extractor-args "youtube:player_client=web" \
                     "$URL" && DOWNLOAD_OK=true
                   ;;
                 3)
-                  yt-dlp --format "$FORMAT" --merge-output-format mp4 \
-                    --write-thumbnail --convert-thumbnails jpg \
+                  yt-dlp $COMMON_OPTS --format "$FORMAT" \
                     --output "$TMP_DIR/%(title)s.%(ext)s" \
-                    --no-playlist --retries 3 --no-check-certificates \
                     --extractor-args "youtube:player_client=mweb" \
                     "$URL" && DOWNLOAD_OK=true
                   ;;
                 4)
-                  yt-dlp --format "best[height<=720]+bestaudio/best" --merge-output-format mp4 \
-                    --write-thumbnail --convert-thumbnails jpg \
+                  yt-dlp $COMMON_OPTS --format "best[height<=720]+bestaudio/best" \
                     --output "$TMP_DIR/%(title)s.%(ext)s" \
-                    --no-playlist --retries 3 \
                     "$URL" && DOWNLOAD_OK=true
                   ;;
               esac
@@ -206,14 +208,15 @@ jobs:
             FINAL_DIR="videos/$FOLDER_NAME"
             mkdir -p "$FINAL_DIR"
 
+            # Copy thumbnail
             if [ -f "$THUMB_FILE" ]; then
               cp "$THUMB_FILE" "$FINAL_DIR/thumbnail.jpg"
             fi
 
             FILE_SIZE=$(stat -c%s "$VIDEO_FILE")
-            MAX_SIZE=$((100 * 1024 * 1024))
+            MAX_SIZE=$((100 * 1024 * 1024))   # 100MB
             if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
-              echo "File larger than 100MB, splitting into ${SPLIT_MB}MB parts..."
+              echo "File >100MB, splitting into ${SPLIT_MB}MB parts..."
               if [ -n "$PASSWORD" ]; then
                 7z a -tzip -v${SPLIT_MB}m -p"$PASSWORD" "$FINAL_DIR/${FOLDER_NAME}.zip" "$VIDEO_FILE"
               else
@@ -227,44 +230,55 @@ jobs:
                 PART_LINKS="${PART_LINKS}| ${PART_NAME} | [Download](${LINK}) |\n"
               done
               TOTAL_PARTS=$(echo -e "$PART_LINKS" | wc -l)
-              README_CONTENT="# ${NAME_NOEXT}\n\n"
-              [ -f "$FINAL_DIR/thumbnail.jpg" ] && README_CONTENT+="![Thumbnail](thumbnail.jpg)\n\n"
-              README_CONTENT+="## Video Info\n"
-              README_CONTENT+="- **Quality**: ${QUALITY}\n"
-              README_CONTENT+="- **Original URL**: [YouTube](${URL})\n"
-              README_CONTENT+="- **Total Size**: $(numfmt --to=iec $FILE_SIZE)\n"
-              README_CONTENT+="- **Parts**: ${TOTAL_PARTS}\n"
-              [ -n "$PASSWORD" ] && README_CONTENT+="- **Password**: YES (use when extracting)\n"
-              README_CONTENT+="\n## Download Links\n\n"
-              README_CONTENT+="Download all parts into the same folder, then extract the first part.\n\n"
-              README_CONTENT+="| File | Link |\n|------|------|\n"
-              README_CONTENT+="$PART_LINKS"
-              echo -e "$README_CONTENT" > "$FINAL_DIR/README.md"
+              cat > "$FINAL_DIR/README.md" <<EOF
+# ${NAME_NOEXT}
+
+![Thumbnail](thumbnail.jpg)
+
+## Video Info
+- **Quality**: ${QUALITY}
+- **Original URL**: [YouTube](${URL})
+- **Total Size**: $(numfmt --to=iec $FILE_SIZE)
+- **Parts**: ${TOTAL_PARTS}
+$( [ -n "$PASSWORD" ] && echo "- **Password**: YES (use when extracting)" )
+
+## Download Links
+Download all parts into the same folder, then extract the first part.
+
+| File | Link |
+|------|------|
+$(echo -e "$PART_LINKS")
+EOF
             else
               cp "$VIDEO_FILE" "$FINAL_DIR/${FOLDER_NAME}.mp4"
               ENC_FILE=$(urlencode "${FOLDER_NAME}.mp4")
               RAW_LINK="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/videos/${FOLDER_NAME}/${ENC_FILE}"
-              README_CONTENT="# ${NAME_NOEXT}\n\n"
-              [ -f "$FINAL_DIR/thumbnail.jpg" ] && README_CONTENT+="![Thumbnail](thumbnail.jpg)\n\n"
-              README_CONTENT+="## Video Info\n"
-              README_CONTENT+="- **Quality**: ${QUALITY}\n"
-              README_CONTENT+="- **Original URL**: [YouTube](${URL})\n"
-              README_CONTENT+="- **Size**: $(numfmt --to=iec $FILE_SIZE)\n"
-              [ -n "$PASSWORD" ] && README_CONTENT+="- **Password**: YES (zip is password protected)\n"
-              README_CONTENT+="\n## Download Link\n\n"
-              README_CONTENT+="[Download ${FOLDER_NAME}.mp4](${RAW_LINK})\n"
-              echo -e "$README_CONTENT" > "$FINAL_DIR/README.md"
+              cat > "$FINAL_DIR/README.md" <<EOF
+# ${NAME_NOEXT}
+
+![Thumbnail](thumbnail.jpg)
+
+## Video Info
+- **Quality**: ${QUALITY}
+- **Original URL**: [YouTube](${URL})
+- **Size**: $(numfmt --to=iec $FILE_SIZE)
+$( [ -n "$PASSWORD" ] && echo "- **Password**: YES (zip is password protected)" )
+
+## Download Link
+[Download ${FOLDER_NAME}.mp4](${RAW_LINK})
+EOF
             fi
 
+            # Subtitles if requested
             if [ "$SUBS" = "true" ]; then
               echo "Downloading subtitles..."
               SUB_DIR="$FINAL_DIR/subtitles"
               mkdir -p "$SUB_DIR"
-              yt-dlp --write-sub --sub-langs fa,en --convert-subs vtt --skip-download \
+              yt-dlp $COMMON_OPTS --write-sub --sub-langs fa,en --convert-subs vtt --skip-download \
                 --output "$SUB_DIR/%(title)s.%(ext)s" "$URL" 2>/dev/null || true
-              yt-dlp --write-auto-sub --sub-langs fa,en --convert-subs vtt --skip-download \
+              yt-dlp $COMMON_OPTS --write-auto-sub --sub-langs fa,en --convert-subs vtt --skip-download \
                 --output "$SUB_DIR/%(title)s.%(ext)s" "$URL" 2>/dev/null || true
-              if [ -n "$(find "$SUB_DIR" -type f)" ]; then
+              if [ -n "$(find "$SUB_DIR" -type f -size +0c 2>/dev/null)" ]; then
                 (cd "$SUB_DIR" && zip -j "../subtitles.zip" ./*) && rm -rf "$SUB_DIR"
               else
                 rmdir "$SUB_DIR" 2>/dev/null || true
@@ -290,6 +304,5 @@ jobs:
               echo "Push failed, retry $i/5..."
               sleep 5
               git pull --rebase origin ${GITHUB_REF_NAME} || true
-              git push origin HEAD:${GITHUB_REF_NAME}
             fi
           done

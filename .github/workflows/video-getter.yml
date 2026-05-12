@@ -117,8 +117,9 @@ jobs:
           PASSWORD="$ZIP_PASS"
           COOKIE_FILE="cookies.txt"
 
+          # Fixed sanitize function (using Python for safety)
           sanitize() {
-            echo "$1" | sed 's/[^A-Za-z0-9_\-.波斯فارسی]/_/g' | sed 's/__*/_/g'
+            python3 -c "import re, sys; print(re.sub(r'[^A-Za-z0-9_\-\.\u0621-\u064A\u06F0-\u06F9]', '_', sys.argv[1]))" "$1" | sed 's/__*/_/g'
           }
           urlencode() {
             python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
@@ -152,7 +153,6 @@ jobs:
             mkdir -p "$TMP_DIR"
 
             DOWNLOAD_OK=false
-            # Try different methods
             for METHOD in 1 2 3 4; do
               echo "Trying method $METHOD..."
               case $METHOD in
@@ -208,13 +208,12 @@ jobs:
             FINAL_DIR="videos/$FOLDER_NAME"
             mkdir -p "$FINAL_DIR"
 
-            # Copy thumbnail
             if [ -f "$THUMB_FILE" ]; then
               cp "$THUMB_FILE" "$FINAL_DIR/thumbnail.jpg"
             fi
 
             FILE_SIZE=$(stat -c%s "$VIDEO_FILE")
-            MAX_SIZE=$((100 * 1024 * 1024))   # 100MB
+            MAX_SIZE=$((100 * 1024 * 1024))
             if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
               echo "File >100MB, splitting into ${SPLIT_MB}MB parts..."
               if [ -n "$PASSWORD" ]; then
@@ -230,40 +229,39 @@ jobs:
                 PART_LINKS="${PART_LINKS}| ${PART_NAME} | [Download](${LINK}) |\n"
               done
               TOTAL_PARTS=$(echo -e "$PART_LINKS" | wc -l)
-              # Write README using printf (safe for YAML)
-              printf "# %s\n\n" "${NAME_NOEXT}" > "$FINAL_DIR/README.md"
-              printf "![Thumbnail](thumbnail.jpg)\n\n" >> "$FINAL_DIR/README.md"
-              printf "## Video Info\n" >> "$FINAL_DIR/README.md"
-              printf "- **Quality**: %s\n" "${QUALITY}" >> "$FINAL_DIR/README.md"
-              printf "- **Original URL**: [YouTube](%s)\n" "${URL}" >> "$FINAL_DIR/README.md"
-              printf "- **Total Size**: %s\n" "$(numfmt --to=iec $FILE_SIZE)" >> "$FINAL_DIR/README.md"
-              printf "- **Parts**: %s\n" "${TOTAL_PARTS}" >> "$FINAL_DIR/README.md"
+              # Using printf -- to avoid option parsing
+              printf -- "# %s\n\n" "${NAME_NOEXT}" > "$FINAL_DIR/README.md"
+              printf -- "![Thumbnail](thumbnail.jpg)\n\n" >> "$FINAL_DIR/README.md"
+              printf -- "## Video Info\n" >> "$FINAL_DIR/README.md"
+              printf -- "- **Quality**: %s\n" "${QUALITY}" >> "$FINAL_DIR/README.md"
+              printf -- "- **Original URL**: [YouTube](%s)\n" "${URL}" >> "$FINAL_DIR/README.md"
+              printf -- "- **Total Size**: %s\n" "$(numfmt --to=iec $FILE_SIZE)" >> "$FINAL_DIR/README.md"
+              printf -- "- **Parts**: %s\n" "${TOTAL_PARTS}" >> "$FINAL_DIR/README.md"
               if [ -n "$PASSWORD" ]; then
-                printf "- **Password**: YES (use when extracting)\n" >> "$FINAL_DIR/README.md"
+                printf -- "- **Password**: YES (use when extracting)\n" >> "$FINAL_DIR/README.md"
               fi
-              printf "\n## Download Links\n\n" >> "$FINAL_DIR/README.md"
-              printf "Download all parts into the same folder, then extract the first part.\n\n" >> "$FINAL_DIR/README.md"
-              printf "| File | Link |\n" >> "$FINAL_DIR/README.md"
-              printf "|------|------|\n" >> "$FINAL_DIR/README.md"
-              printf "%b" "$PART_LINKS" >> "$FINAL_DIR/README.md"
+              printf -- "\n## Download Links\n\n" >> "$FINAL_DIR/README.md"
+              printf -- "Download all parts into the same folder, then extract the first part.\n\n" >> "$FINAL_DIR/README.md"
+              printf -- "| File | Link |\n" >> "$FINAL_DIR/README.md"
+              printf -- "|------|------|\n" >> "$FINAL_DIR/README.md"
+              printf -- "%b" "$PART_LINKS" >> "$FINAL_DIR/README.md"
             else
               cp "$VIDEO_FILE" "$FINAL_DIR/${FOLDER_NAME}.mp4"
               ENC_FILE=$(urlencode "${FOLDER_NAME}.mp4")
               RAW_LINK="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/videos/${FOLDER_NAME}/${ENC_FILE}"
-              printf "# %s\n\n" "${NAME_NOEXT}" > "$FINAL_DIR/README.md"
-              printf "![Thumbnail](thumbnail.jpg)\n\n" >> "$FINAL_DIR/README.md"
-              printf "## Video Info\n" >> "$FINAL_DIR/README.md"
-              printf "- **Quality**: %s\n" "${QUALITY}" >> "$FINAL_DIR/README.md"
-              printf "- **Original URL**: [YouTube](%s)\n" "${URL}" >> "$FINAL_DIR/README.md"
-              printf "- **Size**: %s\n" "$(numfmt --to=iec $FILE_SIZE)" >> "$FINAL_DIR/README.md"
+              printf -- "# %s\n\n" "${NAME_NOEXT}" > "$FINAL_DIR/README.md"
+              printf -- "![Thumbnail](thumbnail.jpg)\n\n" >> "$FINAL_DIR/README.md"
+              printf -- "## Video Info\n" >> "$FINAL_DIR/README.md"
+              printf -- "- **Quality**: %s\n" "${QUALITY}" >> "$FINAL_DIR/README.md"
+              printf -- "- **Original URL**: [YouTube](%s)\n" "${URL}" >> "$FINAL_DIR/README.md"
+              printf -- "- **Size**: %s\n" "$(numfmt --to=iec $FILE_SIZE)" >> "$FINAL_DIR/README.md"
               if [ -n "$PASSWORD" ]; then
-                printf "- **Password**: YES (zip is password protected)\n" >> "$FINAL_DIR/README.md"
+                printf -- "- **Password**: YES (zip is password protected)\n" >> "$FINAL_DIR/README.md"
               fi
-              printf "\n## Download Link\n\n" >> "$FINAL_DIR/README.md"
-              printf "[Download %s.mp4](%s)\n" "${FOLDER_NAME}" "${RAW_LINK}" >> "$FINAL_DIR/README.md"
+              printf -- "\n## Download Link\n\n" >> "$FINAL_DIR/README.md"
+              printf -- "[Download %s.mp4](%s)\n" "${FOLDER_NAME}" "${RAW_LINK}" >> "$FINAL_DIR/README.md"
             fi
 
-            # Subtitles if requested
             if [ "$SUBS" = "true" ]; then
               echo "Downloading subtitles..."
               SUB_DIR="$FINAL_DIR/subtitles"

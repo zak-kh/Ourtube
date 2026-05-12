@@ -230,43 +230,37 @@ jobs:
                 PART_LINKS="${PART_LINKS}| ${PART_NAME} | [Download](${LINK}) |\n"
               done
               TOTAL_PARTS=$(echo -e "$PART_LINKS" | wc -l)
-              cat > "$FINAL_DIR/README.md" <<EOF
-# ${NAME_NOEXT}
-
-![Thumbnail](thumbnail.jpg)
-
-## Video Info
-- **Quality**: ${QUALITY}
-- **Original URL**: [YouTube](${URL})
-- **Total Size**: $(numfmt --to=iec $FILE_SIZE)
-- **Parts**: ${TOTAL_PARTS}
-$( [ -n "$PASSWORD" ] && echo "- **Password**: YES (use when extracting)" )
-
-## Download Links
-Download all parts into the same folder, then extract the first part.
-
-| File | Link |
-|------|------|
-$(echo -e "$PART_LINKS")
-EOF
+              # Write README using printf (safe for YAML)
+              printf "# %s\n\n" "${NAME_NOEXT}" > "$FINAL_DIR/README.md"
+              printf "![Thumbnail](thumbnail.jpg)\n\n" >> "$FINAL_DIR/README.md"
+              printf "## Video Info\n" >> "$FINAL_DIR/README.md"
+              printf "- **Quality**: %s\n" "${QUALITY}" >> "$FINAL_DIR/README.md"
+              printf "- **Original URL**: [YouTube](%s)\n" "${URL}" >> "$FINAL_DIR/README.md"
+              printf "- **Total Size**: %s\n" "$(numfmt --to=iec $FILE_SIZE)" >> "$FINAL_DIR/README.md"
+              printf "- **Parts**: %s\n" "${TOTAL_PARTS}" >> "$FINAL_DIR/README.md"
+              if [ -n "$PASSWORD" ]; then
+                printf "- **Password**: YES (use when extracting)\n" >> "$FINAL_DIR/README.md"
+              fi
+              printf "\n## Download Links\n\n" >> "$FINAL_DIR/README.md"
+              printf "Download all parts into the same folder, then extract the first part.\n\n" >> "$FINAL_DIR/README.md"
+              printf "| File | Link |\n" >> "$FINAL_DIR/README.md"
+              printf "|------|------|\n" >> "$FINAL_DIR/README.md"
+              printf "%b" "$PART_LINKS" >> "$FINAL_DIR/README.md"
             else
               cp "$VIDEO_FILE" "$FINAL_DIR/${FOLDER_NAME}.mp4"
               ENC_FILE=$(urlencode "${FOLDER_NAME}.mp4")
               RAW_LINK="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/videos/${FOLDER_NAME}/${ENC_FILE}"
-              cat > "$FINAL_DIR/README.md" <<EOF
-# ${NAME_NOEXT}
-
-![Thumbnail](thumbnail.jpg)
-
-## Video Info
-- **Quality**: ${QUALITY}
-- **Original URL**: [YouTube](${URL})
-- **Size**: $(numfmt --to=iec $FILE_SIZE)
-$( [ -n "$PASSWORD" ] && echo "- **Password**: YES (zip is password protected)" )
-
-## Download Link
-[Download ${FOLDER_NAME}.mp4](${RAW_LINK})
-EOF
+              printf "# %s\n\n" "${NAME_NOEXT}" > "$FINAL_DIR/README.md"
+              printf "![Thumbnail](thumbnail.jpg)\n\n" >> "$FINAL_DIR/README.md"
+              printf "## Video Info\n" >> "$FINAL_DIR/README.md"
+              printf "- **Quality**: %s\n" "${QUALITY}" >> "$FINAL_DIR/README.md"
+              printf "- **Original URL**: [YouTube](%s)\n" "${URL}" >> "$FINAL_DIR/README.md"
+              printf "- **Size**: %s\n" "$(numfmt --to=iec $FILE_SIZE)" >> "$FINAL_DIR/README.md"
+              if [ -n "$PASSWORD" ]; then
+                printf "- **Password**: YES (zip is password protected)\n" >> "$FINAL_DIR/README.md"
+              fi
+              printf "\n## Download Link\n\n" >> "$FINAL_DIR/README.md"
+              printf "[Download %s.mp4](%s)\n" "${FOLDER_NAME}" "${RAW_LINK}" >> "$FINAL_DIR/README.md"
             fi
 
             # Subtitles if requested

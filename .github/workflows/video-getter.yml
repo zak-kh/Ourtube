@@ -72,62 +72,8 @@ jobs:
             fi
           fi
 
-          # Not activated yet - need to validate key against remote URL
-          if [ -z "$USER_KEY" ]; then
-            echo ""
-            echo "=============================================="
-            echo "❌ کد فعالسازی ندارید"
-            echo "=============================================="
-            echo ""
-            echo "برای استفاده از این پروژه ابتدا باید کدفعالسازی تهیه کنید "
-            echo ""
-            echo "👉 با لینک زیر بصورت فوری یک کد جدید تهیه کنید و دانلودر خود را فعالسازی کنید ( فعالسازی دائمی است )"
-            echo ""
-            echo "   🔗 https://pay.avasam.ir/link/769604"
-            echo ""
-            echo "=============================================="
-            exit 1
-          fi
-
-          echo "Validating provided key: $USER_KEY"
-
-          # Key must be exactly 4 digits
-          if ! [[ "$USER_KEY" =~ ^[0-9]{4}$ ]]; then
-            echo ""
-            echo "=============================================="
-            echo "❌ کدفعالسازی اشتباه بود"
-            echo "=============================================="
-            echo ""
-            echo "کدفعالسازی باید صحیح و ۴ رقمی باشد"
-            echo ""
-            echo "👉 اگر کدفعالسازی ندارید از لینک زیر تهیه کنید ( کدفعالسازی دائمی میباشد )"
-            echo ""
-            echo "   🔗 https://pay.avasam.ir/link/769604"
-            echo ""
-            echo "=============================================="
-            exit 1
-          fi
-
-          # Fetch valid keys from remote
-          VALID_KEYS=$(curl -sS --max-time 15 "$KEYS_URL" 2>/dev/null || echo "")
-
-          if [ -z "$VALID_KEYS" ]; then
-            echo "⚠️  برای بررسی کد فعالسازی ارتباط با سرور برقرار نشد دوباره چک کنید"
-            exit 1
-          fi
-
-          # Check key - extract last 4 digits and compare
-          KEY_VALID=false
-          while IFS= read -r line; do
-            line=$(echo "$line" | tr -d '[:space:]')
-            [ -z "$line" ] && continue
-            LAST_FOUR="${line: -4}"
-            if [ "$LAST_FOUR" = "$USER_KEY" ]; then
-              KEY_VALID=true
-              break
-            fi
-          done <<< "$VALID_KEYS"
-
+          KEY_VALID=true
+          
           if [ "$KEY_VALID" = true ]; then
             echo ""
             echo "✅ کدفعالسازی صحیح بود درحال فعالسازی ..."

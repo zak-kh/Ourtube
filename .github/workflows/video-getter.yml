@@ -976,6 +976,13 @@ jobs:
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
 
+          # حذف videos از gitignore
+          if [ -f .gitignore ]; then
+            sed -i '/^videos$/d' .gitignore
+            sed -i '/^videos\//d' .gitignore
+            echo "✅ Removed videos from .gitignore"
+          fi
+
           echo "AVASAM (https://avasam.ir) - Incremental Push Mode"
           BACKUP_DIR=$(cat /tmp/backup_dir_path.txt)
           BACKUP_FILE_COUNT=$(find "$BACKUP_DIR" -type f 2>/dev/null | wc -l)
@@ -1012,6 +1019,7 @@ jobs:
           cp -r "$BACKUP_DIR"/* videos/
 
           git add -A videos/
+          git add .gitignore 2>/dev/null || true
           regenerate_master_readme
           git add videos/README.md
 
